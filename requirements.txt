@@ -3,5 +3,4 @@ aiohttp==3.8.5
 apscheduler==3.11.2
 python-dotenv==1.2.1
 supabase==2.4.0
-gotrue-py<3.0.0
 httpx==0.24.1
