@@ -1,4 +1,4 @@
-aiogram==3.4.1
+python-telegram-bot==20.5
 aiohttp
 apscheduler
 python-dotenv
