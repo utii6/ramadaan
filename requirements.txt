@@ -1,6 +1,4 @@
-python-telegram-bot==20.5
-aiohttp==3.8.5
-apscheduler==3.11.2
-python-dotenv==1.2.1
-supabase==2.4.0
-httpx==0.24.1
+pyTelegramBotAPI==4.20.0
+Flask==3.0.0
+requests==2.31.0
+psycopg2-binary==2.9.10
