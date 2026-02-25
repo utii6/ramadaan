@@ -1,206 +1,337 @@
-import os, random, logging, asyncio, aiohttp
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, StateFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from supabase import create_client, Client
+import os
+import logging
+import random
+import asyncio
+import aiohttp
+import datetime
 
-# --- الإعدادات الأساسية ---
-TOKEN = os.getenv("BOT_TOKEN")
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters
+)
+from supabase import create_client
+
+# ========= الإعدادات =========
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@yourchannel")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-CHANNEL_ID = "@qd3qd" # استبدله بيوزر قناتك الفعلي
 
-AZKAR_URL = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
+AZKAR_API = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-db: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+logging.basicConfig(level=logging.INFO)
+
+db = create_client(SUPABASE_URL, SUPABASE_KEY)
 ALL_AZKAR = {}
+BROADCAST = 1
+REACTIONS = ["❤️", "✨", "🤲", "📿", "🌙", "☁️"]
 
-class AdminStates(StatesGroup):
-    waiting_for_broadcast = State()
-
-# --- وظائف البيانات والتحقق ---
+# ========= أدوات =========
 
 async def fetch_azkar():
     global ALL_AZKAR
+    if ALL_AZKAR:
+        return
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(AZKAR_URL) as r:
-                if r.status == 200: ALL_AZKAR = await r.json()
-        except Exception: pass
+        async with session.get(AZKAR_API) as r:
+            if r.status == 200:
+                ALL_AZKAR = await r.json()
 
-async def is_subbed(user_id):
+async def is_subscribed(bot, user_id):
     try:
-        m = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        return m.status in ["member", "administrator", "creator"]
-    except Exception: return True
+        member = await bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
 
 def get_rank(count):
-    if count < 100: return "🌱 ذاكر مبتدئ"
-    if count < 500: return "✨ مستغفر مداوم"
-    if count < 1000: return "📿 محب للذكر"
-    return "🌟 من الذاكرين الله كثيراً"
-
-# --- لوحات المفاتيح ---
-
-def main_reply_kb():
-    b = ReplyKeyboardBuilder()
-    b.button(text="📖 الأذكار الشاملة"), b.button(text="📿 السبحة الإلكترونية")
-    b.button(text="📊 إحصائياتي"), b.button(text="⚙️ الإعدادات")
-    b.button(text="🤝 صدقة جارية")
-    b.adjust(2)
-    return b.as_markup(resize_keyboard=True)
-
-def azkar_cats_kb():
-    b = InlineKeyboardBuilder()
-    cats = [("☀️ الصباح", "az_أذكار الصباح"), ("🌙 المساء", "az_أذكار المساء"), 
-            ("💤 النوم", "az_أذكار النوم"), ("🕌 الصلاة", "az_أذكار الصلاة"),
-            ("📖 أدعية قرآنية", "az_أدعية قرآنية"), ("🌟 أدعية نبوية", "az_أدعية نبوية")]
-    for t, d in cats: b.add(InlineKeyboardButton(text=t, callback_data=d))
-    b.adjust(2)
-    return b.as_markup()
-
-# --- المعالجات الرئيسية (Handlers) ---
-
-@dp.message(Command("start"))
-async def cmd_start(msg: Message):
-    user_id = msg.from_user.id
-    if not await is_subbed(user_id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 اشترك في القناة", url=f"t.me/{CHANNEL_ID[1:]}")],
-            [InlineKeyboardButton(text="✅ تم الاشتراك", callback_data="check_sub")]
-        ])
-        return await msg.answer("✨ **أهلاً بك في بوت الأذكار**\n\nعذراً، يجب الاشتراك في القناة أولاً:", reply_markup=kb)
-
-    # فحص المستخدم في القاعدة
-    res = db.table("users").select("*").eq("user_id", user_id).execute()
-    if not res.data:
-        db.table("users").insert({"user_id": user_id, "username": msg.from_user.username, "full_name": msg.from_user.full_name}).execute()
-        total_users = db.table("users").select("user_id", count="exact").execute().count
-        await bot.send_message(OWNER_ID, f"🔔 **مشترك جديد**\n\nالاسم: {msg.from_user.full_name}\nالعدد الكلي: {total_users}")
+    if count < 100:
+        return "🌱 مبتدئ"
+    elif count < 500:
+        return "✨ مداوم"
+    elif count < 1000:
+        return "📿 محب للذكر"
     else:
-        db.table("users").update({"username": msg.from_user.username, "full_name": msg.from_user.full_name}).eq("user_id", user_id).execute()
+        return "🌟 من الذاكرين"
 
-    welcome = f"✨ **مرحباً بك يا {msg.from_user.first_name}**"
-    if user_id == OWNER_ID: welcome = "👑 **أهلاً بك يا مطوري العزيز**"
-    await msg.answer(welcome, reply_markup=main_reply_kb())
-
-@dp.message(F.text == "📖 الأذكار الشاملة")
-async def show_cats(msg: Message):
-    await msg.answer("🗂 **اختر التصنيف:**", reply_markup=azkar_cats_kb())
-
-@dp.message(F.text == "📿 السبحة الإلكترونية")
-async def tasbih_start(msg: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ سبّح (0)", callback_data="ts_1")],
-        [InlineKeyboardButton(text="🔄 تصفير", callback_data="ts_0")]
-    ])
-    await msg.answer("📿 **السبحة الإلكترونية**\n\nاضغط للبدء بالتسبيح:", reply_markup=kb)
-
-@dp.message(F.text == "📊 إحصائياتي")
-async def my_stats(msg: Message):
-    res = db.table("users").select("total_reads").eq("user_id", msg.from_user.id).single().execute()
-    count = res.data.get('total_reads', 0) if res.data else 0
-    await msg.answer(f"━━━━━━━━━━━━\n👤 **ملف العبادة**\n\n✨ الأذكار المقروءة: `{count}`\n🏅 الرتبة: {get_rank(count)}\n━━━━━━━━━━━━")
-
-@dp.message(F.text == "⚙️ الإعدادات")
-async def settings(msg: Message):
-    res = db.table("users").select("notifications_enabled").eq("user_id", msg.from_user.id).single().execute()
-    status = res.data.get('notifications_enabled', True)
-    btn_text = "🔕 إيقاف التنبيهات" if status else "🔔 تفعيل التنبيهات"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_text, callback_data="toggle_notif")]])
-    await msg.answer(f"⚙️ **إعدادات التنبيهات**\nالحالة: {'✅ مفعلة' if status else '❌ معطلة'}", reply_markup=kb)
-
-@dp.message(F.text == "🤝 صدقة جارية")
-async def share_bot(msg: Message):
-    # زر المشاركة الشفاف (Switch Inline Query)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 مشاركة مع صديق", switch_inline_query="انصحك بهذا البوت الرائع للأذكار ✨")]
-    ])
-    await msg.answer(
-        "✨ **ساهم في نشر الخير**\n\nشارك البوت مع أصدقائك ليكون لك صدقة جارية:\nhttps://t.me/RiRbBot",
-        reply_markup=kb
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            ["📖 الأذكار", "📿 السبحة"],
+            ["📊 إحصائياتي", "⚙️ الإعدادات"],
+            ["🤝 مشاركة"]
+        ],
+        resize_keyboard=True
     )
 
-# --- معالجة الـ Callback Queries ---
+def get_user(user_id):
+    return db.table("users").select("*").eq("user_id", user_id).execute().data
 
-@dp.callback_query(F.data.startswith("ts_"))
-async def handle_ts(call: CallbackQuery):
-    val = int(call.data.split("_")[1])
-    new_val = val + 1 if val > 0 else 0
-    if val > 0: # تحديث القاعدة عند التسبيح
-        db.rpc('increment_reads', {'u_id': call.from_user.id}).execute()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"➕ سبّح ({new_val})", callback_data=f"ts_{new_val}")],
-        [InlineKeyboardButton(text="🔄 تصفير", callback_data="ts_0")]
+def create_user(user):
+    db.table("users").insert({
+        "user_id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "total_reads": 0,
+        "tasbih_count": 0,
+        "notifications_enabled": True,
+        "joined_at": str(datetime.datetime.utcnow())
+    }).execute()
+
+def update_reads(user_id):
+    db.rpc("increment_reads", {"u_id": user_id}).execute()
+
+def update_tasbih(user_id, value):
+    db.table("users").update({"tasbih_count": value}).eq("user_id", user_id).execute()
+
+# ========= تفاعل عشوائي =========
+
+async def react(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        emoji = random.choice(REACTIONS)
+        await context.bot.set_message_reaction(
+            chat_id=update.effective_chat.id,
+            message_id=update.effective_message.id,
+            reaction=[{"type": "emoji", "emoji": emoji}]
+        )
+    except:
+        pass
+
+# ========= /start =========
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    if not await is_subscribed(context.bot, user.id):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("اشترك", url=f"https://t.me/{CHANNEL_ID[1:]}")]
+        ])
+        await update.message.reply_text("يجب الاشتراك أولاً.", reply_markup=kb)
+        return
+
+    if not get_user(user.id):
+        create_user(user)
+        total = db.table("users").select("user_id", count="exact").execute().count
+        await context.bot.send_message(
+            OWNER_ID,
+            f"🔔 مستخدم جديد\nالاسم: {user.full_name}\nالعدد: {total}"
+        )
+
+    await update.message.reply_text(
+        f"مرحباً {user.first_name}",
+        reply_markup=main_keyboard()
+    )
+
+# ========= الأذكار =========
+
+async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("☀️ الصباح", callback_data="az_أذكار الصباح")],
+        [InlineKeyboardButton("🌙 المساء", callback_data="az_أذكار المساء")],
+        [InlineKeyboardButton("💤 النوم", callback_data="az_أذكار النوم")]
     ])
-    await call.message.edit_reply_markup(reply_markup=kb)
+    await update.message.reply_text("اختر:", reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("az_"))
-async def send_zekr(call: CallbackQuery):
-    cat = call.data.split("_")[1]
-    if not ALL_AZKAR: await fetch_azkar()
-    item = random.choice(ALL_AZKAR.get(cat, [{"content": "ذكر الله حياة القلوب"}]))
-    txt = item.get("content") or item.get("zekr")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 ذكر آخر", callback_data=call.data)],
-        [InlineKeyboardButton(text="✅ تمت القراءة", callback_data="done_read")]
+async def send_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    await fetch_azkar()
+    cat = query.data.split("_", 1)[1]
+    items = ALL_AZKAR.get(cat, [])
+    if not items:
+        await query.edit_message_text("لا يوجد محتوى.")
+        return
+
+    item = random.choice(items)
+    text = item.get("content") or item.get("zekr")
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("ذكر آخر", callback_data=query.data)],
+        [InlineKeyboardButton("✅ تمت القراءة", callback_data="done")]
     ])
-    await call.message.edit_text(f"✨ **{cat}**\n\n{txt}", reply_markup=kb)
 
-@dp.callback_query(F.data == "done_read")
-async def done_r(call: CallbackQuery):
-    db.rpc('increment_reads', {'u_id': call.from_user.id}).execute()
-    await call.answer("تقبل الله منك! ✨")
+    await query.edit_message_text(f"{cat}\n\n{text}", reply_markup=kb)
 
-@dp.callback_query(F.data == "toggle_notif")
-async def toggle(call: CallbackQuery):
-    res = db.table("users").select("notifications_enabled").eq("user_id", call.from_user.id).single().execute()
-    new_s = not res.data.get('notifications_enabled', True)
-    db.table("users").update({"notifications_enabled": new_s}).eq("user_id", call.from_user.id).execute()
-    await call.message.edit_text(f"⚙️ تم التحديث! الحالة الآن: {'✅ مفعلة' if new_s else '❌ معطلة'}")
+async def done_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("تقبل الله منك")
+    update_reads(query.from_user.id)
 
-# --- الإدارة (Admin) ---
+# ========= السبحة =========
 
-@dp.message(Command("admin"))
-async def admin_panel(msg: Message):
-    if msg.from_user.id == OWNER_ID:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 إذاعة عامة", callback_data="start_bc")]])
-        await msg.answer("🔒 لوحة التحكم", reply_markup=kb)
+async def tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ سبّح", callback_data="ts_plus")],
+        [InlineKeyboardButton("تصفير", callback_data="ts_zero")]
+    ])
+    await update.message.reply_text("ابدأ التسبيح:", reply_markup=kb)
 
-@dp.callback_query(F.data == "start_bc")
-async def start_bc(call: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminStates.waiting_for_broadcast)
-    await call.message.answer("أرسل رسالة الإذاعة الآن:")
+async def handle_tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-@dp.message(AdminStates.waiting_for_broadcast)
-async def do_bc(msg: Message, state: FSMContext):
-    await state.clear()
-    users = db.table("users").select("user_id").execute().data
-    s, f = 0, 0
+    user = get_user(query.from_user.id)[0]
+    count = user["tasbih_count"]
+
+    if query.data == "ts_plus":
+        count += 1
+    else:
+        count = 0
+
+    update_tasbih(query.from_user.id, count)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"➕ سبّح ({count})", callback_data="ts_plus")],
+        [InlineKeyboardButton("تصفير", callback_data="ts_zero")]
+    ])
+
+    await query.edit_message_reply_markup(reply_markup=kb)
+
+# ========= الإحصائيات =========
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)[0]
+    await update.message.reply_text(
+        f"📊 إحصائياتك\n\n"
+        f"الأذكار: {user['total_reads']}\n"
+        f"الرتبة: {get_rank(user['total_reads'])}\n"
+        f"التسبيحات: {user['tasbih_count']}"
+    )
+
+# ========= الإعدادات =========
+
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)[0]
+    new_status = not user["notifications_enabled"]
+    db.table("users").update(
+        {"notifications_enabled": new_status}
+    ).eq("user_id", user["user_id"]).execute()
+
+    await update.message.reply_text(
+        f"التنبيهات الآن: {'مفعلة' if new_status else 'معطلة'}"
+    )
+
+# ========= المشاركة =========
+
+async def share(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    me = await context.bot.get_me()
+    await update.message.reply_text(f"https://t.me/{me.username}")
+
+# ========= الجدولة =========
+
+async def scheduled_morning(context: ContextTypes.DEFAULT_TYPE):
+    await send_scheduled(context, "أذكار الصباح", "☀️ تذكير الصباح")
+
+async def scheduled_evening(context: ContextTypes.DEFAULT_TYPE):
+    await send_scheduled(context, "أذكار المساء", "🌙 تذكير المساء")
+
+async def send_scheduled(context, category, title):
+    await fetch_azkar()
+    users = db.table("users") \
+        .select("user_id") \
+        .eq("notifications_enabled", True) \
+        .execute().data
+
+    items = ALL_AZKAR.get(category, [])
+    if not items:
+        return
+
+    text = random.choice(items).get("content", "")
+
     for u in users:
         try:
-            await msg.copy_to(u['user_id'])
-            s += 1
-            await asyncio.sleep(0.05)
-        except: f += 1
-    await msg.answer(f"✅ انتهى الإرسال\nنجاح: {s} | فشل: {f}")
+            await context.bot.send_message(
+                u["user_id"],
+                f"{title}\n\n{text}"
+            )
+            await asyncio.sleep(0.1)
+        except:
+            pass
 
-# --- الإقلاع ---
+# ========= لوحة التحكم =========
 
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    await fetch_azkar()
-    await bot.delete_webhook(drop_pending_updates=True)
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 إذاعة", callback_data="broadcast")]
+    ])
+    await update.message.reply_text("لوحة التحكم:", reply_markup=kb)
+
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("أرسل رسالة الإذاعة:")
+    return BROADCAST
+
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users = db.table("users").select("user_id").execute().data
+    success = 0
+    fail = 0
+
+    for u in users:
+        try:
+            await update.message.copy(u["user_id"])
+            success += 1
+            await asyncio.sleep(0.1)
+        except:
+            fail += 1
+
+    await update.message.reply_text(f"انتهى.\nنجاح: {success}\nفشل: {fail}")
+    return ConversationHandler.END
+
+# ========= التشغيل =========
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(broadcast_start, pattern="broadcast")],
+        states={BROADCAST: [MessageHandler(filters.ALL, broadcast_send)]},
+        fallbacks=[]
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin))
+
+    app.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), show_categories))
+    app.add_handler(MessageHandler(filters.Regex("📿 السبحة"), tasbih))
+    app.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), stats))
+    app.add_handler(MessageHandler(filters.Regex("⚙️ الإعدادات"), settings))
+    app.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share))
+
+    app.add_handler(CallbackQueryHandler(send_zekr, pattern="^az_"))
+    app.add_handler(CallbackQueryHandler(done_read, pattern="^done$"))
+    app.add_handler(CallbackQueryHandler(handle_tasbih, pattern="^ts_"))
+    app.add_handler(conv)
+
+    # تفاعل عشوائي
+    app.add_handler(MessageHandler(filters.ALL, react), group=1)
+
+    # جدولة
+    app.job_queue.run_daily(
+        scheduled_morning,
+        time=datetime.time(hour=7, minute=0)
+    )
+    app.job_queue.run_daily(
+        scheduled_evening,
+        time=datetime.time(hour=18, minute=0)
+    )
+
+    print("Bot running (Polling)...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
