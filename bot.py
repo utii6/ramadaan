@@ -1,116 +1,117 @@
 import os
-import asyncio
-import logging
 import random
+import logging
+import asyncio
+import requests
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, ReactionTypeEmoji, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from aiohttp import web
 from supabase import create_client, Client
 
-# استدعاء ملف الأذكار (تأكد من وجود ملف اسمه azkar.py بجانبه)
-import azkar 
-
-# --- الإعدادات (تأكد من وضعها في Render) ---
+# --- الإعدادات ---
 TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# رابط قاعدة بيانات الأذكار الشاملة (JSON)
+AZKAR_DATA_URL = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
 # تهيئة البوت وقاعدة البيانات
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- وظائف قاعدة البيانات (Supabase) ---
-async def add_user_to_db(user_id, username, full_name):
+# --- جلب الأذكار من الرابط الخارجي ---
+def load_remote_azkar():
     try:
-        # محاولة إضافة المستخدم، إذا كان موجوداً سيفشل الطلب وهذا المطلوب (لمنع التكرار)
-        supabase.table("users").insert({
-            "user_id": user_id, 
-            "username": username
-        }).execute()
+        response = requests.get(AZKAR_DATA_URL)
+        return response.json()
+    except Exception as e:
+        logging.error(f"Error loading azkar: {e}")
+        return {}
+
+# تخزين الأذكار في ذاكرة البوت عند التشغيل
+ALL_AZKAR = load_remote_azkar()
+
+def get_random_zekr(category_name):
+    category_list = ALL_AZKAR.get(category_name, [])
+    if category_list:
+        selected = random.choice(category_list)
+        # الرابط أحياناً يستخدم مفتاح 'content' وأحياناً 'zekr'
+        return selected.get('content') or selected.get('zekr') or "عذراً، لم نتمكن من جلب النص."
+    return "لا توجد أذكار في هذا التصنيف حالياً."
+
+# --- وظائف Supabase ---
+async def add_user_to_db(user_id, username):
+    try:
+        supabase.table("users").insert({"user_id": user_id, "username": username}).execute()
         return True
-    except:
-        return False
+    except: return False
 
-async def get_users_count():
-    res = supabase.table("users").select("user_id", count="exact").execute()
-    return res.count
-
-async def get_setting(key_name):
-    res = supabase.table("settings").select("value").eq("key", key_name).execute()
-    return res.data[0]['value'] if res.data else None
-
-# --- خادم الويب (للبقاء حياً على Render) ---
-async def handle(request): return web.Response(text="Bot is Live!")
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 10000)
-    await site.start()
-
-# --- لوحة المفاتيح الشفافة (Inline) ---
+# --- لوحة المفاتيح الشاملة ---
 def main_menu_kb():
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="☀️ أذكار الصباح", callback_data="azkar_morning"))
-    builder.row(InlineKeyboardButton(text="🌙 أذكار المساء", callback_data="azkar_evening"))
-    builder.row(InlineKeyboardButton(text="📜 أذكار متنوعة", callback_data="azkar_random"))
+    # تقسيم الأزرار بشكل منظم
+    buttons = [
+        ("☀️ أذكار الصباح", "az_أذكار الصباح"),
+        ("🌙 أذكار المساء", "az_أذكار المساء"),
+        ("💤 أذكار النوم", "az_أذكار النوم"),
+        ("🕌 أذكار الصلاة", "az_أذكار الصلاة"),
+        ("📿 بعد الصلاة", "az_أذكار بعد الصلاة"),
+        ("📖 أدعية قرآنية", "az_أدعية قرآنية"),
+        ("🌟 أدعية نبوية", "az_أدعية نبوية"),
+        ("⛅ أذكار الاستيقاظ", "az_أذكار الاستيقاظ")
+    ]
+    for text, callback in buttons:
+        builder.add(InlineKeyboardButton(text=text, callback_data=callback))
+    
+    builder.adjust(2) # وضع زرين في كل صف
     return builder.as_markup()
 
 # --- معالجة الأوامر ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    # تفاعل إيموجي
-    try: await message.react([ReactionTypeEmoji(emoji="❤️‍🔥")])
-    except: pass
-
     uid = message.from_user.id
-    uname = message.from_user.username or "بدون يوزر"
-    fname = message.from_user.full_name
-
-    # محاولة إضافة المستخدم وإشعار المالك
-    is_new = await add_user_to_db(uid, uname, fname)
-    if is_new:
-        total = await get_users_count()
-        msg = f"👤 **مستخدم جديد انضم!**\n\n🔹 الاسم: {fname}\n🔹 اليوزر: @{uname}\n🔹 الآيدي: `{uid}`\n\n📈 العدد الإجمالي: {total}"
-        try: await bot.send_message(OWNER_ID, msg, parse_mode="Markdown")
-        except: pass
-
-    welcome = await get_setting("welcome_msg") or "مرحباً بك في بوت الأذكار"
+    uname = message.from_user.username
     
-    # أزرار سفلية دائمة
-    kb = ReplyKeyboardBuilder()
-    kb.button(text="📖 القائمة الرئيسية")
-    if uid == OWNER_ID: kb.button(text="⚙️ لوحة التحكم")
+    # إضافة المستخدم لـ Supabase
+    await add_user_to_db(uid, uname)
     
-    await message.answer(welcome, reply_markup=kb.as_markup(resize_keyboard=True))
-    await message.answer("اختر من الأذكار أدناه:", reply_markup=main_menu_kb())
+    welcome_text = "🌸 **مرحباً بك في بوت الأذكار الشامل**\n\nتم تحديث البوت ليدمج مئات الأذكار والأدعية من المصادر الموثوقة. اختر ما تريد من القائمة أدناه:"
+    
+    # أزرار ثابتة بالأسفل
+    reply_kb = ReplyKeyboardBuilder()
+    reply_kb.button(text="📖 القائمة الرئيسية")
+    
+    await message.answer(welcome_text, reply_markup=reply_kb.as_markup(resize_keyboard=True), parse_mode="Markdown")
+    await message.answer("القائمة:", reply_markup=main_menu_kb())
 
-@dp.callback_query(F.data.startswith("azkar_"))
+@dp.callback_query(F.data.startswith("az_"))
 async def handle_azkar(call: CallbackQuery):
     category = call.data.split("_")[1]
+    txt = get_random_zekr(category)
     
-    if category == "morning":
-        txt = random.choice(azkar.MORNING_AZKAR)
-        title = "☀️ أذكار الصباح"
-    elif category == "evening":
-        txt = random.choice(azkar.EVENING_AZKAR)
-        title = "🌙 أذكار المساء"
-    else:
-        txt = random.choice(azkar.RANDOM_AZKAR)
-        title = "📜 ذكر متنوع"
-
-    await call.message.answer(f"✨ **{title}**\n\n{txt}", parse_mode="Markdown")
+    # إرسال الذكر مع زر "ذكر آخر" من نفس النوع
+    refresh_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 ذكر آخر من نفس النوع", callback_data=f"az_{category}")],
+        [InlineKeyboardButton(text="🔙 العودة للقائمة", callback_data="back_to_menu")]
+    ])
+    
+    await call.message.edit_text(f"✨ **{category}**\n\n{txt}\n\n---", reply_markup=refresh_kb, parse_mode="Markdown")
     await call.answer()
 
-# --- التشغيل ---
+@dp.callback_query(F.data == "back_to_menu")
+async def back_menu(call: CallbackQuery):
+    await call.message.edit_text("اختر من الأذكار أدناه:", reply_markup=main_menu_kb())
+    await call.answer()
+
+# --- تشغيل البوت ---
 async def main():
     logging.basicConfig(level=logging.INFO)
-    await asyncio.gather(start_web_server(), dp.start_polling(bot))
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
