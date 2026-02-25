@@ -13,7 +13,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-CHANNEL_ID = "@YourChannel"  # ضع يوزر قناتك هنا
+CHANNEL_ID = "@Qd3Qd"  # ضع يوزر قناتك هنا
 
 AZKAR_URL = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
