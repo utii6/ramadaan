@@ -2,116 +2,140 @@ import os
 import random
 import logging
 import asyncio
-import requests
+import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from aiohttp import web
 from supabase import create_client, Client
 
-# --- الإعدادات ---
+# --- الإعدادات الأساسية ---
 TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-# رابط قاعدة بيانات الأذكار الشاملة (JSON)
 AZKAR_DATA_URL = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
-# تهيئة البوت وقاعدة البيانات
+# تهيئة البوت والديسباتشر وقاعدة البيانات
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- جلب الأذكار من الرابط الخارجي ---
-def load_remote_azkar():
+ALL_AZKAR = {}
+
+# --- وظائف جلب البيانات وقاعدة البيانات ---
+
+async def fetch_azkar():
+    global ALL_AZKAR
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(AZKAR_DATA_URL) as response:
+                if response.status == 200:
+                    ALL_AZKAR = await response.json()
+                    logging.info("✅ الأذكار جاهزة")
+        except Exception as e:
+            logging.error(f"❌ خطأ جلب الأذكار: {e}")
+
+async def add_user(user: types.User):
     try:
-        response = requests.get(AZKAR_DATA_URL)
-        return response.json()
-    except Exception as e:
-        logging.error(f"Error loading azkar: {e}")
-        return {}
-
-# تخزين الأذكار في ذاكرة البوت عند التشغيل
-ALL_AZKAR = load_remote_azkar()
-
-def get_random_zekr(category_name):
-    category_list = ALL_AZKAR.get(category_name, [])
-    if category_list:
-        selected = random.choice(category_list)
-        # الرابط أحياناً يستخدم مفتاح 'content' وأحياناً 'zekr'
-        return selected.get('content') or selected.get('zekr') or "عذراً، لم نتمكن من جلب النص."
-    return "لا توجد أذكار في هذا التصنيف حالياً."
-
-# --- وظائف Supabase ---
-async def add_user_to_db(user_id, username):
-    try:
-        supabase.table("users").insert({"user_id": user_id, "username": username}).execute()
+        # إضافة أو تحديث بيانات المستخدم
+        supabase.table("users").upsert({
+            "user_id": user.id,
+            "username": user.username,
+            "full_name": user.full_name
+        }).execute()
         return True
     except: return False
 
-# --- لوحة المفاتيح الشاملة ---
+async def get_stats():
+    res = supabase.table("users").select("user_id", count="exact").execute()
+    return res.count
+
+# --- لوحات المفاتيح ---
+
 def main_menu_kb():
     builder = InlineKeyboardBuilder()
-    # تقسيم الأزرار بشكل منظم
-    buttons = [
-        ("☀️ أذكار الصباح", "az_أذكار الصباح"),
-        ("🌙 أذكار المساء", "az_أذكار المساء"),
-        ("💤 أذكار النوم", "az_أذكار النوم"),
-        ("🕌 أذكار الصلاة", "az_أذكار الصلاة"),
-        ("📿 بعد الصلاة", "az_أذكار بعد الصلاة"),
-        ("📖 أدعية قرآنية", "az_أدعية قرآنية"),
-        ("🌟 أدعية نبوية", "az_أدعية نبوية"),
-        ("⛅ أذكار الاستيقاظ", "az_أذكار الاستيقاظ")
-    ]
-    for text, callback in buttons:
-        builder.add(InlineKeyboardButton(text=text, callback_data=callback))
-    
-    builder.adjust(2) # وضع زرين في كل صف
+    cats = [("☀️ الصباح", "az_أذكار الصباح"), ("🌙 المساء", "az_أذكار المساء"), 
+            ("💤 النوم", "az_أذكار النوم"), ("🕌 الصلاة", "az_أذكار الصلاة"),
+            ("📿 بعد الصلاة", "az_أذكار بعد الصلاة"), ("🌟 أدعية نبوية", "az_أدعية نبوية")]
+    for text, data in cats:
+        builder.add(InlineKeyboardButton(text=text, callback_data=data))
+    builder.adjust(2)
     return builder.as_markup()
 
-# --- معالجة الأوامر ---
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    uid = message.from_user.id
-    uname = message.from_user.username
-    
-    # إضافة المستخدم لـ Supabase
-    await add_user_to_db(uid, uname)
-    
-    welcome_text = "🌸 **مرحباً بك في بوت الأذكار الشامل**\n\nتم تحديث البوت ليدمج مئات الأذكار والأدعية من المصادر الموثوقة. اختر ما تريد من القائمة أدناه:"
-    
-    # أزرار ثابتة بالأسفل
-    reply_kb = ReplyKeyboardBuilder()
-    reply_kb.button(text="📖 القائمة الرئيسية")
-    
-    await message.answer(welcome_text, reply_markup=reply_kb.as_markup(resize_keyboard=True), parse_mode="Markdown")
-    await message.answer("القائمة:", reply_markup=main_menu_kb())
+def admin_kb():
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="📊 عدد المستخدمين", callback_data="admin_stats"))
+    builder.add(InlineKeyboardButton(text="📢 إذاعة (قريباً)", callback_data="admin_broadcast"))
+    return builder.as_markup()
+
+# --- معالجة الرسائل والأوامر ---
+
+@dp.message()
+async def auto_reaction_and_process(message: Message):
+    # التفاعل التلقائي على أي رسالة تصل للبوت
+    try:
+        await message.react([ReactionTypeEmoji(emoji=random.choice(["❤️", "✨", "📿", "🌟"]))])
+    except: pass
+
+    # إذا كان الأمر /start
+    if message.text == "/start":
+        is_new = await add_user(message.from_user)
+        if is_new:
+            total = await get_stats()
+            # إشعار المالك
+            try:
+                await bot.send_message(OWNER_ID, f"🔔 **مستخدم جديد!**\nالاسم: {message.from_user.full_name}\nاليوزر: @{message.from_user.username}\nالعدد الكلي: {total}")
+            except: pass
+        
+        await message.answer("🌸 **مرحباً بك في بوت الأذكار النهائي**\nاستخدم القائمة أدناه لذكر الله:", reply_markup=main_menu_kb())
+
+    # أمر الإدارة
+    elif message.text == "/admin":
+        if message.from_user.id == OWNER_ID:
+            await message.answer("🔐 **لوحة تحكم المالك**", reply_markup=admin_kb())
+        else:
+            await message.answer("❌ عذراً، هذا الأمر للمالك فقط.")
+
+# --- معالجة الضغط على الأزرار ---
 
 @dp.callback_query(F.data.startswith("az_"))
 async def handle_azkar(call: CallbackQuery):
     category = call.data.split("_")[1]
-    txt = get_random_zekr(category)
+    if not ALL_AZKAR: await fetch_azkar()
     
-    # إرسال الذكر مع زر "ذكر آخر" من نفس النوع
-    refresh_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 ذكر آخر من نفس النوع", callback_data=f"az_{category}")],
-        [InlineKeyboardButton(text="🔙 العودة للقائمة", callback_data="back_to_menu")]
-    ])
-    
-    await call.message.edit_text(f"✨ **{category}**\n\n{txt}\n\n---", reply_markup=refresh_kb, parse_mode="Markdown")
+    lst = ALL_AZKAR.get(category, [])
+    if lst:
+        item = random.choice(lst)
+        txt = item.get('content') or item.get('zekr')
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 ذكر آخر", callback_data=call.data)],
+            [InlineKeyboardButton(text="🔙 العودة", callback_data="back")]
+        ])
+        await call.message.edit_text(f"✨ **{category}**\n\n{txt}", reply_markup=kb)
     await call.answer()
 
-@dp.callback_query(F.data == "back_to_menu")
-async def back_menu(call: CallbackQuery):
-    await call.message.edit_text("اختر من الأذكار أدناه:", reply_markup=main_menu_kb())
-    await call.answer()
+@dp.callback_query(F.data == "back")
+async def go_back(call: CallbackQuery):
+    await call.message.edit_text("اختر من القائمة:", reply_markup=main_menu_kb())
 
-# --- تشغيل البوت ---
+@dp.callback_query(F.data == "admin_stats")
+async def show_stats(call: CallbackQuery):
+    count = await get_stats()
+    await call.answer(f"عدد المستخدمين الحالي: {count}", show_alert=True)
+
+# --- التشغيل النهائي ---
+
 async def main():
     logging.basicConfig(level=logging.INFO)
+    await fetch_azkar()
+    # تنظيف العمليات القديمة
+    await bot.delete_webhook(drop_pending_updates=True)
+    print("🚀 البوت يعمل الآن...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("❌البوت توقف!")
