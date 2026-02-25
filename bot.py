@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery, ReactionTypeEmoji
 from aiohttp import web # لإبقاء البوت مستيقظاً
 
 # --- الإعدادات ---
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "6288532598:AAGKP2NCQ_HSn3V8moewzVPRP8t8N9rLvZk"
 OWNER_ID = 5581457665  # ID حسابك
 CHANNEL_ID = "@Qd3Qd" 
 WELCOME_MSG = "مرحباً بك في بوت الأذكار 🌸"
