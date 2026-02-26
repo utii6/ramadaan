@@ -27,6 +27,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@yourchannel")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 AZKAR_API = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
@@ -34,7 +35,7 @@ logging.basicConfig(level=logging.INFO)
 
 # ========= قاعدة البيانات =========
 # اتصال PostgreSQL مباشرة بدون async
-conn = psycopg2.connect(SUPABASE_URL)
+conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 # ========= أدوات =========
