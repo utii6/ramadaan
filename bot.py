@@ -1,45 +1,39 @@
 import os
 import logging
 import random
-import datetime
+import json
 import psycopg2
-import asyncio
 from flask import Flask
 from threading import Thread
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    constants
+    ReplyKeyboardMarkup
 )
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ConversationHandler,
     ContextTypes,
+    ConversationHandler,
     filters
 )
-import json
 
-# ==========================================
-# الإعدادات الأساسية
-# ==========================================
+# ==============================
+# الإعدادات
+# ==============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@yourchannel")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==========================================
+# ==============================
 # قاعدة البيانات
-# ==========================================
+# ==============================
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
@@ -50,125 +44,226 @@ def initialize_database():
             username TEXT,
             full_name TEXT,
             total_reads INTEGER DEFAULT 0,
-            tasbih_count INTEGER DEFAULT 0,
-            notifications_enabled BOOLEAN DEFAULT TRUE,
             joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
-    logger.info("تم إنشاء وفحص قاعدة البيانات.")
 
-# ==========================================
-# الأذكار (من ملف PHP المحوّل)
-# ==========================================
-ALL_AZKAR = {
-    "أذكار عامة": [
-        "اللهم اغفر ذنبي وطهر قلبي",
-        "اللهم اغفر للمؤمنين والمؤمنات",
-        "اللهم هون علينا سكرات الموت",
-        "اللهم اني استودعتك قلبي فلا تجعل فيه غيرك",
-        "لاحول ولاقوة الا بالله",
-        "سبحان الله الحمدلله لا اله الا الله الله اكبر",
-        "واذكر ربك اذا نسيت",
-        "سبحان الله وبحمده سبحان الله العظيم",
-        "اللهم ارحم من سبقونا اليك",
-        "اللهم الهمنا الشهادة عند الموت",
-        "اللهم أدخلني الجنة من غير حساب",
-        "لا اله الا الله عدد انفاس البشر",
-        "اللهم انت السلام ومنك السلام",
-        "اللهم دبّر لي فإني لا أحسن التدبير",
-        "استغفر الله بعدد ذنوبنا حتى تُغفر",
-        "استغفر الله بعدد من ذكر وشكر",
-        "استغفر الله بعدد من صلى وكبر",
-        "رب اغفر وارحم وانت خير الراحمين",
-        "رب زدني علما",
-        "ربنا هب لنا من أزواجنا وذرياتنا قرى أعين واجعلنا للمتقين إماما",
-        "اللهم طهرني من الذنوب والخطايا",
-        "لا معطي لما منعت ولامانع لما أعطيت",
-        "اللهم حبب الينا الايمان وزينه في قلوبنا",
-        "اللهم توفنا مسلمين",
-        "اللهم نسألك الجنة ونعوذ بك من النار",
-        "اللهم أسألك لذة النظر لوجهك الكريم",
-        "اللهم ألف بين قلوبنا",
-        "اللهم اني أسألك الفردوس الأعلى في الجنة",
-        "اللهم أجرني من النار",
-        "ياحي ياقيوم برحمتك أستغيث",
-        "اللهم لك الحمد حتى ترضى",
-        "الحمدلله عدد أوراق الشجر وعدد قطرات الماء",
-        "يا ودود يا ودود",
-        "يامغيث أغثني",
-        "ياغياث المستغيثين أغثني",
-        "يارب ارزقني من حيث لا أحتسب",
-        "استغفر الله العظيم من كل ذنب أذنبته",
-        "استغفر الله العظيم من كل كلام لهوت به",
-        "اللهم اجعلنا بارين طائعين لوالدينا",
-        "رب أعوذ بك من همزات الشياطين وأعوذ بك رب أن يحضرون",
-        "ربنا اننا امنا فاغفر لنا ذنوبنا",
-        "يارب احسن ختامنا",
-        "رب اجعلني مقيم الصلاة ومن ذريتي",
-        "رب ابن لي عندك بيتا في الجنة",
-        "رب اغفرلي ولوالدي",
-        "ربنا تقبل منا وتب علينا",
-        "ربنا اتنا في الدنيا حسنة وفي الاخرة حسنة",
-        "ربنا لاتؤاخذنا ان نسينا او أخطأنا",
-        "ربنا لا تزغ قلوبنا بعد اذ هديتنا",
-        "رب هب لي من لدنك ذرية طيبة",
-        "رب أحسن ختامنا",
-        "رب اشرح لي صدري ويسر لي أمري",
-        "اني مسني الضر وأنت أرحم الراحمين",
-        "سبحانك أنت رب العرش العظيم",
-        "لك الحمد حمدا يدوم بدوامك",
-        "سبحانك أنت الغفور الودود",
-        "سبوح قدوس ربّنا ورب الملائكة والروح",
-        "سبحان الله اناء الليل وأطراف النهار",
-        "سبحان الله بالغدو والأصال",
-        "سبحان الله حين تمسون وحين تصبحون",
-        "يارب اجعل القادم من حياتنا ينسينا ألم ما مضى فنحن ننتظر فرجك ورحمتك",
-        "اللهم ادفعَ الهموم ، وارزقنا عافية تدوم",
-        "اللهم ارفع مقامنا يا رافع السماء والغيوم",
-        "اللهم اجمعني ووالدي واھلي ومن احب فيك في الفردوس الاعلى يا حي يا قيوم",
-        "اللهم استرنا، ومن ذنوبنا طهرنا، ومن شر خلقك سلمنا",
-        "اللهم توفني وانت راضي عني",
-        "اللهم ارزقني حسن الخاتمه",
-        "اللهم ارزقني الفردوس الاعلي",
-        "اللهم انك عفو كريم تحب العفو فاعفوا عني",
-        "اللهم اعنا علي طاعتك وذكرك وشكرك وحسن عبادتك وارزقنا صالح الاعمال",
-        "اللهم استرنا فوق الارض وتحت الارض ويوم العرض فيه",
-        "اللهم اهد قلبي الي حبك وحب رسولك اللهم اني استودعك قلبي",
-        "اللي طهر قلبي اللهم نق قلبي من الذنوب والخطايا كما ينقي الثوب الابيض من الدنس",
-        "اللهم أدخلنا الجنة من غير حسآب ولا ﻋذاب انا وجميع المسلمين"
-    ]
-}
+# ==============================
+# تحميل الأذكار من JSON
+# ==============================
+def load_azkar():
+    with open("azkar.json", "r", encoding="utf-8") as f:
+        return json.load(f)
 
-# ==========================================
-# إعدادات عامة
-# ==========================================
-BROADCAST_STATE = 1
-REACTIONS_COLLECTION = ["❤️", "✨", "🤲", "📿", "🌙", "🌟", "💎", "☁️", "🌸"]
+AZKAR = load_azkar()
 
-def calculate_user_rank(read_count):
-    if read_count < 100:
+# ==============================
+# أدوات مساعدة
+# ==============================
+REACTIONS = ["❤️","✨","🤲","📿","🌙","🌟","💎","☁️","🌸"]
+
+def get_rank(count):
+    if count < 100:
         return "🌱 مبتدئ"
-    elif read_count < 500:
+    elif count < 500:
         return "✨ مداوم"
-    elif read_count < 1000:
+    elif count < 1000:
         return "📿 محب للذكر"
-    elif read_count < 5000:
-        return "🌟 من الذاكرين"
     else:
-        return "👑 خادم السنة"
+        return "👑 من الذاكرين"
 
-def create_main_markup():
-    keyboard = [
-        ["📖 الأذكار", "📿 السبحة"],
-        ["📊 إحصائياتي", "⚙️ الإعدادات"],
-        ["🤝 مشاركة"]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+def main_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            ["📖 الأذكار","📿 السبحة"],
+            ["📊 إحصائياتي","🤝 مشاركة"]
+        ],
+        resize_keyboard=True
+    )
 
-# ==========================================
-# باقي كود البوت (أوامر المستخدم + لوحة تحكم + سبحة + تفاعلات)
-# ==========================================
-# بنفس الطريقة اللي أرسلتها لك من قبل، بس مع استبدال fetch_azkar_data
-# بحيث يقرأ من ALL_AZKAR["أذكار عامة"] مباشرة
-# وعمل reaction_handler + admin_panel + broadcast_handler
+async def random_reaction(update: Update):
+    try:
+        await update.message.set_reaction(random.choice(REACTIONS))
+    except:
+        pass
+
+# ==============================
+# أوامر المستخدم
+# ==============================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    cur.execute("SELECT user_id FROM users WHERE user_id=%s",(user.id,))
+    exists = cur.fetchone()
+
+    if not exists:
+        cur.execute(
+            "INSERT INTO users (user_id,username,full_name) VALUES (%s,%s,%s)",
+            (user.id,user.username,user.full_name)
+        )
+        conn.commit()
+
+        if OWNER_ID:
+            await context.bot.send_message(
+                OWNER_ID,
+                f"👤 مستخدم جديد\n{user.full_name}\n@{user.username}\nID:{user.id}"
+            )
+
+    await update.message.reply_text(
+        "مرحباً بك في بوت الأذكار 🌙",
+        reply_markup=main_keyboard()
+    )
+
+    await random_reaction(update)
+
+async def show_azkar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    zikr = random.choice(AZKAR["general"])
+    user_id = update.effective_user.id
+
+    cur.execute("UPDATE users SET total_reads=total_reads+1 WHERE user_id=%s",(user_id,))
+    conn.commit()
+
+    await update.message.reply_text(f"📖 {zikr}")
+    await random_reaction(update)
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cur.execute("SELECT total_reads FROM users WHERE user_id=%s",(user_id,))
+    data = cur.fetchone()
+
+    if data:
+        count = data[0]
+        rank = get_rank(count)
+
+        await update.message.reply_text(
+            f"📊 إحصائياتك\n\nعدد الأذكار: {count}\nرتبتك: {rank}"
+        )
+
+    await random_reaction(update)
+
+async def share_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bot_username = (await context.bot.get_me()).username
+    link = f"https://t.me/{bot_username}"
+
+    await update.message.reply_text(f"🤝 رابط مشاركة البوت:\n{link}")
+    await random_reaction(update)
+
+# ==============================
+# السبحة Inline
+# ==============================
+async def tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [[
+        InlineKeyboardButton("➕",callback_data="add"),
+        InlineKeyboardButton("🔄",callback_data="reset")
+    ]]
+
+    await update.message.reply_text(
+        "📿 العداد: 0",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+    await random_reaction(update)
+
+async def tasbih_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    count = context.user_data.get("tasbih",0)
+
+    if query.data == "add":
+        count += 1
+    elif query.data == "reset":
+        count = 0
+
+    context.user_data["tasbih"] = count
+
+    keyboard = [[
+        InlineKeyboardButton("➕",callback_data="add"),
+        InlineKeyboardButton("🔄",callback_data="reset")
+    ]]
+
+    await query.edit_message_text(
+        f"📿 العداد: {count}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ==============================
+# لوحة تحكم + إذاعة
+# ==============================
+BROADCAST = 1
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+
+    cur.execute("SELECT COUNT(*) FROM users")
+    total = cur.fetchone()[0]
+
+    await update.message.reply_text(
+        f"⚙️ لوحة المطور\n\nعدد المستخدمين: {total}"
+    )
+
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return ConversationHandler.END
+
+    await update.message.reply_text("أرسل رسالة الإذاعة الآن")
+    return BROADCAST
+
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message.text
+
+    cur.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+
+    sent = 0
+
+    for user in users:
+        try:
+            await context.bot.send_message(user[0],message)
+            sent += 1
+        except:
+            continue
+
+    await update.message.reply_text(f"تم الإرسال إلى {sent} مستخدم")
+    return ConversationHandler.END
+
+# ==============================
+# Flask (مهم لـ Web Service)
+# ==============================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running"
+
+def run_web():
+    port = int(os.environ.get("PORT",10000))
+    app.run(host="0.0.0.0",port=port)
+
+def run_bot():
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start",start))
+    application.add_handler(CommandHandler("admin",admin))
+
+    application.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("broadcast",broadcast_start)],
+        states={BROADCAST:[MessageHandler(filters.TEXT,broadcast_send)]},
+        fallbacks=[]
+    ))
+
+    application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"),show_azkar))
+    application.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"),stats))
+    application.add_handler(MessageHandler(filters.Regex("📿 السبحة"),tasbih))
+    application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"),share_bot))
+
+    application.add_handler(CallbackQueryHandler(tasbih_handler))
+
+    application.run_polling()
+
+if __name__ == "__main__":
+    initialize_database()
+    Thread(target=run_bot).start()
+    run_web()
