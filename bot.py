@@ -1,54 +1,28 @@
-import os
-import logging
-import random
-import datetime
-import psycopg2
-import requests
-import asyncio
+import os, time, random, logging, psycopg2, requests, asyncio
 from flask import Flask
 from threading import Thread
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, constants
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, ContextTypes, filters
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    constants
-)
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ConversationHandler,
-    ContextTypes,
-    filters
-)
-
-# ==========================================
-# الإعدادات الأساسية (Environment Variables)
-# ==========================================
+# ===============================
+# إعدادات البيئة
+# ===============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@yourchannel")  # القناة الخاصة بالاشتراك الإجباري
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@yourchannel")
 DATABASE_URL = os.getenv("DATABASE_URL")
 AZKAR_API = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
-# إعداد السجلات (Logs) لمراقبة الأخطاء
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# إدارة قاعدة البيانات (PostgreSQL)
-# ==========================================
+# ===============================
+# قاعدة البيانات
+# ===============================
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
 def initialize_database():
-    """إنشاء الجداول اللازمة إذا لم تكن موجودة"""
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id BIGINT PRIMARY KEY,
@@ -60,376 +34,225 @@ def initialize_database():
             joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS smm_users (
+            user_id BIGINT PRIMARY KEY,
+            last_sub REAL DEFAULT 0, last_view REAL DEFAULT 0,
+            is_vip INTEGER DEFAULT 0, vip_expiry REAL DEFAULT 0,
+            points INTEGER DEFAULT 0
+        )
+    """)
     conn.commit()
-    logger.info("تم فحص وإنشاء قاعدة البيانات بنجاح.")
+    logger.info("تم تهيئة قاعدة البيانات.")
 
-# ==========================================
-# الدوال المساعدة (Helper Functions)
-# ==========================================
+# ===============================
+# بيانات الأذكار و Reactions
+# ===============================
 ALL_AZKAR = {}
 BROADCAST_STATE = 1
 REACTIONS_COLLECTION = ["❤️", "✨", "🤲", "📿", "🌙", "🌟", "💎", "☁️", "🌸"]
 
 def fetch_azkar_data():
-    """جلب بيانات الأذكار من المستودع الخارجي"""
     global ALL_AZKAR
     if not ALL_AZKAR:
         try:
-            response = requests.get(AZKAR_API)
-            if response.status_code == 200:
-                ALL_AZKAR = response.json()
+            r = requests.get(AZKAR_API)
+            if r.status_code == 200:
+                ALL_AZKAR = r.json()
         except Exception as e:
             logger.error(f"Error fetching azkar: {e}")
 
 async def check_forced_subscription(bot, user_id):
-    """التحقق من اشتراك المستخدم في القناة (الاشتراك الإجباري)"""
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
-        if member.status in [constants.ChatMemberStatus.MEMBER, 
-                            constants.ChatMemberStatus.ADMINISTRATOR, 
-                            constants.ChatMemberStatus.OWNER]:
-            return True
-        return False
-    except Exception:
-        return False
+        return member.status in [constants.ChatMemberStatus.MEMBER, constants.ChatMemberStatus.ADMINISTRATOR, constants.ChatMemberStatus.OWNER]
+    except: return False
 
 def calculate_user_rank(read_count):
-    """تحديد رتبة المستخدم بناءً على نشاطه"""
-    if read_count < 100:
-        return "🌱 مبتدئ"
-    elif read_count < 500:
-        return "✨ مداوم"
-    elif read_count < 1000:
-        return "📿 محب للذكر"
-    elif read_count < 5000:
-        return "🌟 من الذاكرين"
-    else:
-        return "👑 خادم السنة"
+    if read_count < 100: return "🌱 مبتدئ"
+    elif read_count < 500: return "✨ مداوم"
+    elif read_count < 1000: return "📿 محب للذكر"
+    elif read_count < 5000: return "🌟 من الذاكرين"
+    return "👑 خادم السنة"
 
 def create_main_markup():
-    """لوحة أزرار التحكم الرئيسية"""
-    keyboard = [
-        ["📖 الأذكار", "📿 السبحة"],
-        ["📊 إحصائياتي", "⚙️ الإعدادات"],
-        ["🤝 مشاركة"]
-    ]
+    keyboard = [["📖 الأذكار", "📿 السبحة"], ["📊 إحصائياتي", "⚙️ الإعدادات"], ["🤝 مشاركة"]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# ==========================================
-# معالجة الأوامر الرئيسية (User Side)
-# ==========================================
-
+# ===============================
+# أوامر المستخدم
+# ===============================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر البداية مع نظام الترحيب والتحقق من الاشتراك"""
     user = update.effective_user
-    
-    # التحقق من الاشتراك الإجباري
-    is_sub = await check_forced_subscription(context.bot, user.id)
-    if not is_sub:
-        keyboard = [[InlineKeyboardButton("اضغط للاشتراك في القناة 📢", url=f"https://t.me/{CHANNEL_ID[1:]}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"⚠️ يرجى الاشتراك في القناة أولاً لاستخدام البوت:\n{CHANNEL_ID}",
-            reply_markup=reply_markup
-        )
+    if not await check_forced_subscription(context.bot, user.id):
+        kb = [[InlineKeyboardButton("اشترك بالقناة 📢", url=f"https://t.me/{CHANNEL_ID[1:]}")]]
+        await update.message.reply_text(f"⚠️ يرجى الاشتراك بالقناة {CHANNEL_ID}", reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    # فحص المستخدم في القاعدة
     cur.execute("SELECT user_id FROM users WHERE user_id=%s", (user.id,))
-    existing_user = cur.fetchone()
-    
-    if not existing_user:
-        # إضافة مستخدم جديد
-        cur.execute(
-            "INSERT INTO users (user_id, username, full_name) VALUES (%s, %s, %s)",
-            (user.id, user.username, user.full_name)
-        )
+    if not cur.fetchone():
+        cur.execute("INSERT INTO users (user_id, username, full_name) VALUES (%s,%s,%s)", (user.id, user.username, user.full_name))
         conn.commit()
-        
-        # إرسال إشعار للمالك
         cur.execute("SELECT COUNT(*) FROM users")
         total_count = cur.fetchone()[0]
-        await context.bot.send_message(
-            OWNER_ID,
-            f"🔔 *مستخدم جديد انضم!*\n\n"
-            f"👤 الاسم: {user.full_name}\n"
-            f"🆔 الآيدي: {user.id}\n"
-            f"📈 إجمالي المشتركين: {total_count}",
-            parse_mode="Markdown"
-        )
+        await context.bot.send_message(OWNER_ID, f"🔔 مستخدم جديد!\n👤 {user.full_name}\n🆔 {user.id}\n📈 إجمالي: {total_count}")
 
-    welcome_text = (
-        f"أهلاً بك يا {user.first_name} في بوت الأذكار الشامل 🌙\n\n"
-        "هذا البوت صدقة جارية، يمكنك قراءة الأذكار، التسبيح، ومتابعة إحصائياتك اليومية."
-    )
-    
+    welcome_text = f"أهلاً بك يا {user.first_name} في بوت الأذكار 🌙"
     if user.id == OWNER_ID:
-        welcome_text += "\n\n🛠 *مرحباً يا مطوري!* يمكنك استخدام /admin للدخول للوحة التحكم."
-
+        welcome_text += "\n🛠 يمكنك استخدام /admin للوصول للوحة التحكم"
     await update.message.reply_text(welcome_text, reply_markup=create_main_markup(), parse_mode="Markdown")
 
 async def reaction_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """وضع تفاعل (Reaction) على كل رسالة يرسلها المستخدم"""
     if update.message:
-        try:
-            chosen_emoji = random.choice(REACTIONS_COLLECTION)
-            await update.message.set_reaction(reaction=chosen_emoji)
-        except Exception:
-            pass
+        try: await update.message.set_reaction(random.choice(REACTIONS_COLLECTION))
+        except: pass
 
-# ==========================================
-# قسم الأذكار والسبحة
-# ==========================================
-
+# ===============================
+# أذكار وسبحة
+# ===============================
 async def list_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض تصنيفات الأذكار"""
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("☀️ أذكار الصباح", callback_data="az_أذكار الصباح")],
         [InlineKeyboardButton("🌙 أذكار المساء", callback_data="az_أذكار المساء")],
         [InlineKeyboardButton("💤 أذكار النوم", callback_data="az_أذكار النوم")],
         [InlineKeyboardButton("🕌 أدعية نبوية", callback_data="az_أدعية نبوية")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📖 اختر التصنيف الذي تريد قراءته:", reply_markup=reply_markup)
+    await update.message.reply_text("📖 اختر التصنيف:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def handle_azkar_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إرسال ذكر عشوائي من التصنيف المختار"""
     query = update.callback_query
     await query.answer()
-    
     fetch_azkar_data()
-    category_name = query.data.split("_", 1)[1]
-    azkar_list = ALL_AZKAR.get(category_name, [])
-    
-    if not azkar_list:
-        await query.edit_message_text("عذراً، لا توجد بيانات حالياً.")
-        return
-
-    random_zekr = random.choice(azkar_list)
-    content = random_zekr.get("content") or random_zekr.get("zekr")
-    
-    keyboard = [
-        [InlineKeyboardButton("🔄 ذكر آخر", callback_data=query.data)],
-        [InlineKeyboardButton("✅ تمت القراءة", callback_data="mark_as_read")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        f"✨ *{category_name}*\n\n{content}",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
+    category = query.data.split("_",1)[1]
+    azkar_list = ALL_AZKAR.get(category, [])
+    if not azkar_list: return await query.edit_message_text("لا توجد بيانات حالياً.")
+    content = random.choice(azkar_list).get("content") or random.choice(azkar_list).get("zekr")
+    kb = [[InlineKeyboardButton("🔄 ذكر آخر", callback_data=query.data)],
+          [InlineKeyboardButton("✅ تمت القراءة", callback_data="mark_as_read")]]
+    await query.edit_message_text(f"✨ *{category}*\n\n{content}", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def increment_read_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """زيادة عداد القراءات للمستخدم"""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
+    user_id = update.callback_query.from_user.id
     cur.execute("UPDATE users SET total_reads = total_reads + 1 WHERE user_id=%s", (user_id,))
     conn.commit()
-    
-    await query.answer("بارك الله فيك، تم تسجيل القراءة في ميزان حسناتك ✨")
+    await update.callback_query.answer("تم تسجيل القراءة ✨")
 
 async def display_tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """واجهة السبحة الذكية"""
     user_id = update.effective_user.id
     cur.execute("SELECT tasbih_count FROM users WHERE user_id=%s", (user_id,))
-    current_count = cur.fetchone()[0]
-    
-    keyboard = [
-        [InlineKeyboardButton(f"➕ سبّح ({current_count})", callback_data="tasbih_plus")],
-        [InlineKeyboardButton("♻️ تصفير العداد", callback_data="tasbih_reset")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📿 السبحة الإلكترونية التفاعلية:", reply_markup=reply_markup)
+    count = cur.fetchone()[0]
+    kb = [[InlineKeyboardButton(f"➕ سبّح ({count})", callback_data="tasbih_plus")],
+          [InlineKeyboardButton("♻️ تصفير العداد", callback_data="tasbih_reset")]]
+    await update.message.reply_text("📿 السبحة:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def update_tasbih_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تحديث عداد السبحة بدون رسائل جديدة"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    
     cur.execute("SELECT tasbih_count FROM users WHERE user_id=%s", (user_id,))
     count = cur.fetchone()[0]
-    
-    if query.data == "tasbih_plus":
-        count += 1
-    else:
-        count = 0
-        
+    count = count + 1 if query.data=="tasbih_plus" else 0
     cur.execute("UPDATE users SET tasbih_count=%s WHERE user_id=%s", (count, user_id))
     conn.commit()
-    
-    keyboard = [
-        [InlineKeyboardButton(f"➕ سبّح ({count})", callback_data="tasbih_plus")],
-        [InlineKeyboardButton("♻️ تصفير العداد", callback_data="tasbih_reset")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_reply_markup(reply_markup=reply_markup)
+    kb = [[InlineKeyboardButton(f"➕ سبّح ({count})", callback_data="tasbih_plus")],
+          [InlineKeyboardButton("♻️ تصفير العداد", callback_data="tasbih_reset")]]
+    await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
 
-# ==========================================
+# ===============================
 # الإحصائيات والإعدادات
-# ==========================================
-
+# ===============================
 async def show_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض إحصائيات المستخدم التفصيلية"""
     user_id = update.effective_user.id
     cur.execute("SELECT total_reads, tasbih_count, joined_at FROM users WHERE user_id=%s", (user_id,))
-    data = cur.fetchone()
-    
-    reads, tasbihs, joined = data[0], data[1], data[2]
+    reads, tasbihs, joined = cur.fetchone()
     rank = calculate_user_rank(reads)
-    
-    stats_text = (
-        f"📊 *ملف العبادة الخاص بك:*\n\n"
-        f"🏅 الرتبة: {rank}\n"
-        f"📖 عدد الأذكار: {reads}\n"
-        f"📿 إجمالي التسبيح: {tasbihs}\n"
-        f"📅 تاريخ الانضمام: {joined.strftime('%Y-%m-%d')}"
-    )
+    stats_text = f"📊 *ملفك:*\n🏅 {rank}\n📖 أذكار: {reads}\n📿 تسبيح: {tasbihs}\n📅 انضم: {joined.strftime('%Y-%m-%d')}"
     await update.message.reply_text(stats_text, parse_mode="Markdown")
 
 async def toggle_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تغيير حالة التنبيهات"""
     user_id = update.effective_user.id
     cur.execute("SELECT notifications_enabled FROM users WHERE user_id=%s", (user_id,))
-    current_status = cur.fetchone()[0]
-    
-    new_status = not current_status
+    new_status = not cur.fetchone()[0]
     cur.execute("UPDATE users SET notifications_enabled=%s WHERE user_id=%s", (new_status, user_id))
     conn.commit()
-    
-    status_msg = "✅ تم تفعيل التنبيهات اليومية" if new_status else "❌ تم إيقاف التنبيهات"
-    await update.message.reply_text(status_msg)
+    await update.message.reply_text("✅ تفعيل التنبيهات" if new_status else "❌ إيقاف التنبيهات")
 
 async def share_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """رابط مشاركة البوت"""
     bot_info = await context.bot.get_me()
-    share_text = (
-        f"أدعوكم لاستخدام بوت الأذكار (صدقة جارية) 🌙\n"
-        f"يمكنك قراءة الأذكار ومتابعة وردك اليومي من هنا:\n"
-        f"https://t.me/{bot_info.username}"
-    )
-    await update.message.reply_text(share_text)
+    await update.message.reply_text(f"شارك البوت: https://t.me/{bot_info.username}")
 
-# ==========================================
-# لوحة التحكم (Admin Panel)
-# ==========================================
-
+# ===============================
+# لوحة المطور
+# ===============================
 async def open_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """فتح لوحة المطور"""
-    if update.effective_user.id != OWNER_ID:
-        return
-
+    if update.effective_user.id != OWNER_ID: return
     cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()[0]
-    
-    keyboard = [
-        [InlineKeyboardButton("📢 إذاعة شاملة", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("📊 إحصائيات القاعدة", callback_data="admin_db_info")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"🛠 *لوحة تحكم المطور*\n\n"
-        f"👥 إجمالي المستخدمين: {total_users}\n"
-        f"📡 حالة الخادم: يعمل ✅",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
+    total = cur.fetchone()[0]
+    kb = [[InlineKeyboardButton("📢 إذاعة شاملة", callback_data="admin_broadcast")],
+          [InlineKeyboardButton("📊 إحصائيات القاعدة", callback_data="admin_db_info")]]
+    await update.message.reply_text(f"🛠 لوحة المطور\n👥 إجمالي المستخدمين: {total}", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بداية عملية الإذاعة"""
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("📥 أرسل الآن المحتوى الذي تريد إرساله للجميع (نص، صورة، فيديو، إلخ):")
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("📥 أرسل المحتوى للجميع:")
     return BROADCAST_STATE
 
 async def execute_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تنفيذ الإرسال للجميع مع حماية من الحظر"""
     cur.execute("SELECT user_id FROM users")
     all_ids = cur.fetchall()
-    
-    success_count, fail_count = 0, 0
-    await update.message.reply_text(f"⏳ بدأت عملية الإذاعة لـ {len(all_ids)} مستخدم...")
-    
+    success, fail = 0, 0
+    await update.message.reply_text(f"⏳ بدأ الإرسال لـ {len(all_ids)} مستخدم...")
     for (uid,) in all_ids:
         try:
             await update.message.copy(chat_id=uid)
-            success_count += 1
-            await asyncio.sleep(0.05) # تأخير بسيط لتجنب سبام تليجرام
-        except Exception:
-            fail_count += 1
-            
-    await update.message.reply_text(
-        f"✅ *اكتملت الإذاعة*\n\n"
-        f"✅ نجاح: {success_count}\n"
-        f"❌ فشل (بلوك): {fail_count}",
-        parse_mode="Markdown"
-    )
+            success +=1
+            await asyncio.sleep(0.05)
+        except: fail +=1
+    await update.message.reply_text(f"✅ نجاح: {success}\n❌ فشل: {fail}", parse_mode="Markdown")
     return ConversationHandler.END
 
-# ==========================================
-# Keep-Alive (Flask)
-# ==========================================
+# ===============================
+# Keep-Alive Flask
+# ===============================
 web_app = Flask('')
-
 @web_app.route('/')
-def status_page():
-    return "<h1>Zekr Bot is Live!</h1><p>Status: Healthy ✅</p>"
+def status_page(): return "<h1>Zekr Bot Live ✅</h1>"
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    web_app.run(host='0.0.0.0', port=port)
+def run_web_server(): web_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
-# ==========================================
-# تشغيل البوت (Main Loop)
-# ==========================================
-
+# ===============================
+# Main
+# ===============================
 def main():
-    # 1. تهيئة البيانات والقاعدة
     initialize_database()
-    
-    # 2. تشغيل سيرفر الويب في خلفية مستقلة
     Thread(target=run_web_server, daemon=True).start()
+    app = Application.builder().token(BOT_TOKEN).build()
     
-    # 3. بناء تطبيق التليجرام
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # 4. تعريف محادثة الإذاعة
     broadcast_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_broadcast, pattern="admin_broadcast")],
-        states={
-            BROADCAST_STATE: [MessageHandler(filters.ALL & ~filters.COMMAND, execute_broadcast)]
-        },
+        states={BROADCAST_STATE:[MessageHandler(filters.ALL & ~filters.COMMAND, execute_broadcast)]},
         fallbacks=[]
     )
     
-    # 5. إضافة المعالجات (Handlers)
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("admin", open_admin_panel))
+    # Handlers
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("admin", open_admin_panel))
+    app.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), list_categories))
+    app.add_handler(MessageHandler(filters.Regex("📿 السبحة"), display_tasbih))
+    app.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), show_user_stats))
+    app.add_handler(MessageHandler(filters.Regex("⚙️ الإعدادات"), toggle_notifications))
+    app.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
     
-    # معالجات الأزرار النصية
-    application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), list_categories))
-    application.add_handler(MessageHandler(filters.Regex("📿 السبحة"), display_tasbih))
-    application.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), show_user_stats))
-    application.add_handler(MessageHandler(filters.Regex("⚙️ الإعدادات"), toggle_notifications))
-    application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
+    app.add_handler(CallbackQueryHandler(handle_azkar_request, pattern="^az_"))
+    app.add_handler(CallbackQueryHandler(increment_read_count, pattern="^mark_as_read$"))
+    app.add_handler(CallbackQueryHandler(update_tasbih_counter, pattern="^tasbih_"))
+    app.add_handler(broadcast_handler)
     
-    # معالجات الـ Callback (الأزرار الشفافة)
-    application.add_handler(CallbackQueryHandler(handle_azkar_request, pattern="^az_"))
-    application.add_handler(CallbackQueryHandler(increment_read_count, pattern="^mark_as_read$"))
-    application.add_handler(CallbackQueryHandler(update_tasbih_counter, pattern="^tasbih_"))
+    # Reactions
+    app.add_handler(MessageHandler(filters.ALL, reaction_handler), group=1)
     
-    # إضافة محادثة الإدارة
-    application.add_handler(broadcast_handler)
-    
-    # التفاعل التلقائي (Reaction) على أي رسالة أخرى
-    application.add_handler(MessageHandler(filters.ALL, reaction_handler), group=1)
-    
-    # 6. بدء التشغيل
     print("--- البوت يعمل الآن بنظام Polling ---")
-    application.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
