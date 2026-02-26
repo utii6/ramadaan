@@ -27,8 +27,6 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@yourchannel")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 AZKAR_API = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.json"
 
