@@ -34,7 +34,6 @@ AZKAR_API = "https://raw.githubusercontent.com/nawafalqari/azkar-api/main/azkar.
 logging.basicConfig(level=logging.INFO)
 
 # ========= قاعدة البيانات =========
-# اتصال PostgreSQL مباشرة بدون async
 conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
@@ -51,9 +50,9 @@ def fetch_azkar():
     if r.status_code == 200:
         ALL_AZKAR = r.json()
 
-def is_subscribed(bot, user_id):
+async def is_subscribed(bot, user_id):
     try:
-        member = bot.get_chat_member(CHANNEL_ID, user_id)
+        member = await bot.get_chat_member(CHANNEL_ID, user_id)
         return member.status in ["member", "administrator", "creator"]
     except:
         return False
@@ -98,56 +97,56 @@ def update_tasbih(user_id, value):
     conn.commit()
 
 # ========= تفاعل عشوائي =========
-def react(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def react(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         emoji = random.choice(REACTIONS)
-        context.bot.send_message(chat_id=update.effective_chat.id, text=emoji)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=emoji)
     except:
         pass
 
 # ========= /start =========
-def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
-    if not is_subscribed(context.bot, user.id):
+    if not await is_subscribed(context.bot, user.id):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("اشترك", url=f"https://t.me/{CHANNEL_ID[1:]}")]
         ])
-        update.message.reply_text("يجب الاشتراك أولاً.", reply_markup=kb)
+        await update.message.reply_text("يجب الاشتراك أولاً.", reply_markup=kb)
         return
 
     if not get_user(user.id):
         create_user(user)
         cur.execute("SELECT COUNT(*) FROM users")
         total = cur.fetchone()[0]
-        context.bot.send_message(
+        await context.bot.send_message(
             OWNER_ID,
             f"🔔 مستخدم جديد\nالاسم: {user.full_name}\nالعدد: {total}"
         )
 
-    update.message.reply_text(
+    await update.message.reply_text(
         f"مرحباً {user.first_name}",
         reply_markup=main_keyboard()
     )
 
 # ========= الأذكار =========
-def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("☀️ الصباح", callback_data="az_أذكار الصباح")],
         [InlineKeyboardButton("🌙 المساء", callback_data="az_أذكار المساء")],
         [InlineKeyboardButton("💤 النوم", callback_data="az_أذكار النوم")]
     ])
-    update.message.reply_text("اختر:", reply_markup=kb)
+    await update.message.reply_text("اختر:", reply_markup=kb)
 
-def send_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
 
     fetch_azkar()
     cat = query.data.split("_", 1)[1]
     items = ALL_AZKAR.get(cat, [])
     if not items:
-        query.edit_message_text("لا يوجد محتوى.")
+        await query.edit_message_text("لا يوجد محتوى.")
         return
 
     item = random.choice(items)
@@ -157,24 +156,24 @@ def send_zekr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("ذكر آخر", callback_data=query.data)],
         [InlineKeyboardButton("✅ تمت القراءة", callback_data="done")]
     ])
-    query.edit_message_text(f"{cat}\n\n{text}", reply_markup=kb)
+    await query.edit_message_text(f"{cat}\n\n{text}", reply_markup=kb)
 
-def done_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def done_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer("تقبل الله منك")
+    await query.answer("تقبل الله منك")
     update_reads(query.from_user.id)
 
 # ========= السبحة =========
-def tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ سبّح", callback_data="ts_plus")],
         [InlineKeyboardButton("تصفير", callback_data="ts_zero")]
     ])
-    update.message.reply_text("ابدأ التسبيح:", reply_markup=kb)
+    await update.message.reply_text("ابدأ التسبيح:", reply_markup=kb)
 
-def handle_tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
 
     user = get_user(query.from_user.id)[0]
     count = user[4]  # tasbih_count
@@ -190,12 +189,12 @@ def handle_tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(f"➕ سبّح ({count})", callback_data="ts_plus")],
         [InlineKeyboardButton("تصفير", callback_data="ts_zero")]
     ])
-    query.edit_message_reply_markup(reply_markup=kb)
+    await query.edit_message_reply_markup(reply_markup=kb)
 
 # ========= الإحصائيات =========
-def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)[0]
-    update.message.reply_text(
+    await update.message.reply_text(
         f"📊 إحصائياتك\n\n"
         f"الأذكار: {user[3]}\n"
         f"الرتبة: {get_rank(user[3])}\n"
@@ -203,7 +202,7 @@ def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ========= الإعدادات =========
-def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)[0]
     new_status = not user[5]  # notifications_enabled
     cur.execute(
@@ -211,23 +210,23 @@ def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (new_status, user[0])
     )
     conn.commit()
-    update.message.reply_text(
+    await update.message.reply_text(
         f"التنبيهات الآن: {'مفعلة' if new_status else 'معطلة'}"
     )
 
 # ========= المشاركة =========
-def share(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    me = context.bot.get_me()
-    update.message.reply_text(f"https://t.me/{me.username}")
+async def share(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    me = await context.bot.get_me()
+    await update.message.reply_text(f"https://t.me/{me.username}")
 
 # ========= الجدولة =========
-def scheduled_morning(context: ContextTypes.DEFAULT_TYPE):
-    send_scheduled(context, "أذكار الصباح", "☀️ تذكير الصباح")
+async def scheduled_morning(context: ContextTypes.DEFAULT_TYPE):
+    await send_scheduled(context, "أذكار الصباح", "☀️ تذكير الصباح")
 
-def scheduled_evening(context: ContextTypes.DEFAULT_TYPE):
-    send_scheduled(context, "أذكار المساء", "🌙 تذكير المساء")
+async def scheduled_evening(context: ContextTypes.DEFAULT_TYPE):
+    await send_scheduled(context, "أذكار المساء", "🌙 تذكير المساء")
 
-def send_scheduled(context, category, title):
+async def send_scheduled(context, category, title):
     fetch_azkar()
     cur.execute("SELECT user_id FROM users WHERE notifications_enabled=TRUE")
     users = cur.fetchall()
@@ -238,25 +237,25 @@ def send_scheduled(context, category, title):
     text = random.choice(items).get("content", "")
     for u in users:
         try:
-            context.bot.send_message(u[0], f"{title}\n\n{text}")
+            await context.bot.send_message(u[0], f"{title}\n\n{text}")
         except:
             pass
 
 # ========= لوحة التحكم =========
-def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         return
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 إذاعة", callback_data="broadcast")]
     ])
-    update.message.reply_text("لوحة التحكم:", reply_markup=kb)
+    await update.message.reply_text("لوحة التحكم:", reply_markup=kb)
 
-def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update.callback_query.answer()
-    update.callback_query.message.reply_text("أرسل رسالة الإذاعة:")
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("أرسل رسالة الإذاعة:")
     return BROADCAST
 
-def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur.execute("SELECT user_id FROM users")
     users = cur.fetchall()
     success = 0
@@ -264,12 +263,12 @@ def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for u in users:
         try:
-            update.message.copy(u[0])
+            await update.message.copy(u[0])
             success += 1
         except:
             fail += 1
 
-    update.message.reply_text(f"انتهى.\nنجاح: {success}\nفشل: {fail}")
+    await update.message.reply_text(f"انتهى.\nنجاح: {success}\nفشل: {fail}")
     return ConversationHandler.END
 
 # ========= Keep-Alive =========
@@ -281,6 +280,20 @@ def keep_alive(): Thread(target=run, daemon=True).start()
 
 # ========= التشغيل =========
 def main():
+    # التأكد من إنشاء الجدول عند التشغيل لأول مرة
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            username TEXT,
+            full_name TEXT,
+            total_reads INTEGER DEFAULT 0,
+            tasbih_count INTEGER DEFAULT 0,
+            notifications_enabled BOOLEAN DEFAULT TRUE,
+            joined_at TEXT
+        )
+    """)
+    conn.commit()
+
     keep_alive()
     app_ = Application.builder().token(BOT_TOKEN).build()
 
@@ -304,10 +317,8 @@ def main():
     app_.add_handler(CallbackQueryHandler(handle_tasbih, pattern="^ts_"))
     app_.add_handler(conv)
 
-    # تفاعل عشوائي
     app_.add_handler(MessageHandler(filters.ALL, react), group=1)
 
-    # جدولة
     app_.job_queue.run_daily(
         scheduled_morning,
         time=datetime.time(hour=7, minute=0)
