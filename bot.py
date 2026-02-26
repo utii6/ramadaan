@@ -238,11 +238,9 @@ app = Flask(__name__)
 def home():
     return "Bot is running"
 
-def run_web():
-    port = int(os.environ.get("PORT",10000))
-    app.run(host="0.0.0.0",port=port)
+if __name__ == "__main__":
+    initialize_database()
 
-def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start",start))
@@ -262,8 +260,3 @@ def run_bot():
     application.add_handler(CallbackQueryHandler(tasbih_handler))
 
     application.run_polling()
-
-if __name__ == "__main__":
-    initialize_database()
-    Thread(target=run_bot).start()
-    run_web()
