@@ -113,7 +113,7 @@ async def react(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await is_subscribed(context.bot, user.id):
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("اشترك", url=f"https://t.me/{CHANNEL_ID[1:]}")]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("اشترك هنا", url=f"https://t.me/{CHANNEL_ID[1:]}")]])
         await update.message.reply_text("يجب الاشتراك أولاً.", reply_markup=kb)
         return
 
