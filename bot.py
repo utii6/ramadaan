@@ -303,7 +303,7 @@ if __name__ == "__main__":
         )
         return "ok"
 
-        import asyncio
+ import asyncio  # ← هذا مهم جداً
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
