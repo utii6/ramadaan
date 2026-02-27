@@ -1,4 +1,5 @@
 import os
+import threading
 import asyncio
 import logging
 import random
@@ -256,6 +257,20 @@ async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Flask (لـ Render Web Service)
 # ==============================
 
+from flask import Flask, request
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters,
+)
+import asyncio
+import os
+
 app = Flask(__name__)
 
 @app.route("/")
@@ -263,10 +278,9 @@ def home():
     return "Bot is running"
 
 # ==============================
-# تشغيل البوت
+# إنشاء التطبيق
 # ==============================
 
-# ===== إنشاء التطبيق =====
 application = Application.builder().token(BOT_TOKEN).build()
 
 application.add_handler(CommandHandler("start", start))
@@ -274,7 +288,9 @@ application.add_handler(CommandHandler("admin", admin))
 
 application.add_handler(ConversationHandler(
     entry_points=[CommandHandler("broadcast", broadcast_start)],
-    states={BROADCAST: [MessageHandler(filters.TEXT, broadcast_send)]},
+    states={
+        BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)]
+    },
     fallbacks=[]
 ))
 
@@ -282,28 +298,36 @@ application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), sho
 application.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), stats))
 application.add_handler(MessageHandler(filters.Regex("📿 السبحة"), tasbih))
 application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
+
 application.add_handler(CallbackQueryHandler(tasbih_handler))
 
+# ==============================
+# Webhook Route
+# ==============================
 
-# ===== إنشاء Event Loop =====
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
-
-# ===== Flask Routes =====
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
+async def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    loop.create_task(application.process_update(update))
+    await application.process_update(update)
     return "ok"
 
+# ==============================
+# التشغيل الصحيح لـ Render
+# ==============================
 
-# ===== التشغيل =====
 if __name__ == "__main__":
     initialize_database()
 
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.start())
+    async def main():
+        await application.initialize()
+        await application.start()
+
+        # تعيين الويبهوك (ضع رابط مشروعك هنا)
+        await application.bot.set_webhook(
+            url=f"https://YOUR-RENDER-APP.onrender.com/{BOT_TOKEN}"
+        )
+
+    asyncio.run(main())
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
