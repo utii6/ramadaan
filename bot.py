@@ -288,24 +288,25 @@ if __name__ == "__main__":
     application.add_handler(CallbackQueryHandler(tasbih_handler))
 
     # Webhook setup
-    from flask import Flask, request
-    app = Flask(__name__)
+# إنشاء event loop عالمي
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
-    @app.route("/")
-    def home():
-        return "Bot is running"
+@app.route("/")
+def home():
+    return "Bot is running"
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
     loop.create_task(application.process_update(update))
     return "ok"
-        
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
 
-loop.run_until_complete(application.initialize())
-loop.run_until_complete(application.start())
+if __name__ == "__main__":
+    initialize_database()
 
-port = int(os.environ.get("PORT", 10000))
-app.run(host="0.0.0.0", port=port)
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.start())
+
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
