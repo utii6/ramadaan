@@ -302,6 +302,10 @@ def webhook():
     asyncio.run(application.process_update(update))
     return "ok"
 
-    import os
+    import asyncio
+
+    asyncio.run(application.initialize())
+    asyncio.run(application.start())
+
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
