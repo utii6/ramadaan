@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 import random
 import json
@@ -302,14 +303,12 @@ if __name__ == "__main__":
             application.process_update(update)
         )
         return "ok"
+        
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
- import asyncio  # ← هذا مهم جداً
+loop.run_until_complete(application.initialize())
+loop.run_until_complete(application.start())
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.start())
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+port = int(os.environ.get("PORT", 10000))
+app.run(host="0.0.0.0", port=port)
