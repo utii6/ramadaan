@@ -294,18 +294,20 @@ if __name__ == "__main__":
     def home():
         return "Bot is running"
 
-import asyncio
-
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
-    return "ok"
+    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
+    def webhook():
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(
+            application.process_update(update)
+        )
+        return "ok"
 
     import asyncio
 
-    asyncio.run(application.initialize())
-    asyncio.run(application.start())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.start())
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
