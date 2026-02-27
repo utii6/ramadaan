@@ -3,7 +3,7 @@ import logging
 import random
 import json
 import psycopg2
-from flask import Flask
+from flask import Flask, request
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -286,4 +286,20 @@ if __name__ == "__main__":
 
     application.add_handler(CallbackQueryHandler(tasbih_handler))
 
-    application.run_polling()
+    # Webhook setup
+    from flask import Flask, request
+    app = Flask(__name__)
+
+    @app.route("/")
+    def home():
+        return "Bot is running"
+
+    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
+    async def webhook():
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        await application.process_update(update)
+        return "ok"
+
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
