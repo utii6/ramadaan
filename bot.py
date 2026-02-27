@@ -294,11 +294,13 @@ if __name__ == "__main__":
     def home():
         return "Bot is running"
 
-    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
-    async def webhook():
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        await application.process_update(update)
-        return "ok"
+import asyncio
+
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    asyncio.run(application.process_update(update))
+    return "ok"
 
     import os
     port = int(os.environ.get("PORT", 10000))
