@@ -9,8 +9,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    WebAppInfo
+    ReplyKeyboardMarkup
 )
 from telegram.ext import (
     Application,
@@ -23,19 +22,20 @@ from telegram.ext import (
 )
 
 # ==============================
-# الإعدادات
+# الإعدادات الأساسية
 # ==============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+RENDER_URL = "https://your-app-name.onrender.com" # استبدله برابطك
 
 logging.basicConfig(level=logging.INFO)
 
 # ==============================
-# قاعدة البيانات (تحسين الاتصال)
+# إدارة قاعدة البيانات
 # ==============================
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    return psycopg2.connect(DATABASE_URL)
 
 def initialize_database():
     conn = get_db_connection()
@@ -54,18 +54,24 @@ def initialize_database():
     conn.close()
 
 # ==============================
-# أدوات مساعدة
+# تحميل البيانات والأدوات
 # ==============================
+def load_azkar():
+    try:
+        with open("azkar.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {"general": ["سُبْحَانَ اللَّهِ وَبِحَمْدِهِ", "أستغفر الله العظيم"]}
+
+AZKAR = load_azkar()
 REACTIONS = ["❤️","✨","🤲","📿","🌙","🌟","💎","🌸"]
+TASBIH_ITEMS = ["سبحان الله", "الحمدلله", "لا اله الا الله", "الله اكبر"]
 
 async def send_reaction(update: Update):
-    """إرسال تفاعل حقيقي على الرسالة"""
     try:
         if update.message:
-            # تتطلب إصدار python-telegram-bot 20.8+
-            await update.message.set_reaction(reaction=random.choice(REACTIONS))
-    except Exception as e:
-        logging.error(f"Reaction Error: {e}")
+            await update.message.set_reaction(random.choice(REACTIONS))
+    except: pass
 
 def main_keyboard():
     return ReplyKeyboardMarkup(
@@ -74,87 +80,90 @@ def main_keyboard():
     )
 
 # ==============================
-# الأوامر الأساسية
+# الأوامر والوظائف
 # ==============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     conn = get_db_connection()
     cur = conn.cursor()
-    
     cur.execute("SELECT user_id FROM users WHERE user_id=%s", (user.id,))
     if not cur.fetchone():
-        cur.execute(
-            "INSERT INTO users (user_id, username, full_name) VALUES (%s,%s,%s)",
-            (user.id, user.username, user.full_name)
-        )
+        cur.execute("INSERT INTO users (user_id, username, full_name) VALUES (%s,%s,%s)",
+                    (user.id, user.username, user.full_name))
         conn.commit()
-        # إشعار المطور
-        if OWNER_ID:
-            await context.bot.send_message(OWNER_ID, f"👤 عضو جديد: {user.mention_html()}", parse_mode='HTML')
-
     cur.close()
     conn.close()
-    
-    await update.message.reply_text(
-        f"مرحباً بك يا {user.first_name} في بوت الأذكار 🌙\nاستخدم الأزرار بالأسفل للتنقل.",
-        reply_markup=main_keyboard()
-    )
+
+    await update.message.reply_text("مرحباً بك في بوت الأذكار 🌙", reply_markup=main_keyboard())
+    await send_reaction(update)
+
+async def show_azkar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    zikr = random.choice(AZKAR["general"])
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET total_reads = total_reads + 1 WHERE user_id=%s", (update.effective_user.id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    await update.message.reply_text(f"📖 {zikr}")
     await send_reaction(update)
 
 async def share_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bot_username = (await context.bot.get_me()).username
-    share_url = f"https://t.me/share/url?url=https://t.me/{bot_username}&text=انصحك بتجربة بوت الأذكار والسبحة الإلكترونية 🌙📿"
-    
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 إرسال الرابط لصديق", url=share_url)]
-    ])
-    
-    await update.message.reply_text(
-        "🤝 ساهم في نشر الخير وشارك البوت مع أصدقائك:",
-        reply_markup=keyboard
-    )
-    await send_reaction(update)
+    bot_info = await context.bot.get_me()
+    share_url = f"https://t.me/share/url?url=https://t.me/{bot_info.username}&text=انصحك بتجربة بوت الأذكار 🌙"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 مشاركة البوت الآن", url=share_url)]])
+    await update.message.reply_text("🤝 ساهم في نشر الخير:", reply_markup=keyboard)
 
 # ==============================
-# لوحة التحكم (المطورة)
+# نظام السبحة المتطور
 # ==============================
-BROADCAST = 1
+def build_tasbih_keyboard(counts):
+    keyboard = []
+    for i, text in enumerate(TASBIH_ITEMS):
+        c = counts.get(str(i), 0)
+        keyboard.append([InlineKeyboardButton(f"{text} ({c})", callback_data=f"t_{i}")])
+    keyboard.append([InlineKeyboardButton("🔄 تصفير", callback_data="t_reset")])
+    return InlineKeyboardMarkup(keyboard)
+
+async def tasbih_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    counts = context.user_data.setdefault("t_counts", {})
+    await update.message.reply_text("📿 السبحة الإلكترونية:", reply_markup=build_tasbih_keyboard(counts))
+
+async def tasbih_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    counts = context.user_data.get("t_counts", {})
+
+    if query.data.startswith("t_"):
+        action = query.data.split("_")[1]
+        if action == "reset": context.user_data["t_counts"] = {}
+        else: counts[action] = counts.get(action, 0) + 1
+        
+        await query.edit_message_reply_markup(reply_markup=build_tasbih_keyboard(context.user_data["t_counts"]))
+
+# ==============================
+# لوحة التحكم (Admin)
+# ==============================
+BC_STATE = 1
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM users")
-    count = cur.fetchone()[0]
+    total = cur.fetchone()[0]
     cur.close()
     conn.close()
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 إذاعة للكل", callback_data="admin_bc")],
-        [InlineKeyboardButton("📊 تحديث الإحصائيات", callback_data="admin_stats")]
-    ])
     
-    await update.message.reply_text(
-        f"⚙️ **لوحة التحكم**\n\n👥 عدد المشتركين: {count}",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("📢 إذاعة جماعية", callback_data="adm_bc")]])
+    await update.message.reply_text(f"⚙️ لوحة الإدارة\nالمستخدمين: {total}", reply_markup=kb)
 
-async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query.data == "admin_bc":
-        await query.message.reply_text("📥 أرسل الآن نص الإذاعة (أو أرسل /cancel للإلغاء):")
-        return BROADCAST
-    elif query.data == "admin_stats":
-        await admin_panel(update, context)
-    await query.answer()
+async def bc_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("أرسل نص الإذاعة الآن:")
+    return BC_STATE
 
-async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "/cancel":
-        await update.message.reply_text("❌ تم إلغاء الإذاعة.")
-        return ConversationHandler.END
-
+async def bc_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     conn = get_db_connection()
     cur = conn.cursor()
@@ -162,49 +171,47 @@ async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = cur.fetchall()
     cur.close()
     conn.close()
-
-    sent, fail = 0, 0
-    for user in users:
-        try:
-            await context.bot.send_message(user[0], msg)
-            sent += 1
-            await asyncio.sleep(0.05) # تجنب الحظر
-        except:
-            fail += 1
-            
-    await update.message.reply_text(f"✅ تم الإرسال لـ {sent}\n❌ فشل لـ {fail}")
+    
+    for u in users:
+        try: await context.bot.send_message(u[0], msg)
+        except: pass
+    await update.message.reply_text("✅ تمت الإذاعة بنجاح")
     return ConversationHandler.END
 
 # ==============================
-# تشغيل التطبيق
+# Flask & Webhook Bridge
 # ==============================
 app = Flask(__name__)
 application = Application.builder().token(BOT_TOKEN).build()
 
-# إضافة الهاندرلرات
+# إضافة جميع المعالجات
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("panel", admin_panel))
+application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), show_azkar))
+application.add_handler(MessageHandler(filters.Regex("📿 السبحة"), tasbih_start))
 application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
-
-# نظام الإذاعة
-broadcast_handler = ConversationHandler(
-    entry_points=[CallbackQueryHandler(admin_callback, pattern="^admin_bc$")],
-    states={BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)]},
-    fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)]
-)
-application.add_handler(broadcast_handler)
-
-# (أضف بقية الهاندرلرات الخاصة بالأذكار والسبحة هنا كما في كودك السابق)
+application.add_handler(CallbackQueryHandler(tasbih_handler, pattern="^t_"))
+application.add_handler(ConversationHandler(
+    entry_points=[CallbackQueryHandler(bc_start, pattern="^adm_bc$")],
+    states={BC_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, bc_finish)]},
+    fallbacks=[]
+))
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 async def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        await application.process_update(update)
-        return "ok"
+    if not application.update_queue: await application.initialize()
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    await application.process_update(update)
+    return "ok", 200
+
+@app.route("/")
+def index(): return "Bot is Running", 200
 
 if __name__ == "__main__":
     initialize_database()
-    # كود التشغيل الخاص بـ Render...
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    # تشغيل الويب هوك يدوياً عند بدء التطبيق
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.bot.set_webhook(f"{RENDER_URL}/{BOT_TOKEN}"))
+    
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
