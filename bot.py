@@ -295,14 +295,11 @@ if __name__ == "__main__":
     def home():
         return "Bot is running"
 
-    @app.route(f"/{BOT_TOKEN}", methods=["POST"])
-    def webhook():
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(
-            application.process_update(update)
-        )
-        return "ok"
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    loop.create_task(application.process_update(update))
+    return "ok"
         
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
