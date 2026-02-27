@@ -1,5 +1,4 @@
 import os
-import threading
 import asyncio
 import logging
 import random
@@ -158,49 +157,32 @@ async def share_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await random_reaction(update)
 
 # ==============================
-# السبحة الاحترافية
+# السبحة
 # ==============================
-
-TASBIH_ITEMS = [
-    "سبحان الله",
-    "الحمدلله",
-    "لا اله الا الله",
-    "الله اكبر"
-]
+TASBIH_ITEMS = ["سبحان الله","الحمدلله","لا اله الا الله","الله اكبر"]
 
 def build_tasbih_keyboard(user_counts):
     keyboard = []
     for i, text in enumerate(TASBIH_ITEMS):
         count = user_counts.get(i, 0)
-        keyboard.append([
-            InlineKeyboardButton(f"{text}", callback_data="ignore"),
-        ])
-        keyboard.append([
-            InlineKeyboardButton(f"🔢 {count}", callback_data=f"tasbih_{i}")
-        ])
+        keyboard.append([InlineKeyboardButton(text, callback_data="ignore")])
+        keyboard.append([InlineKeyboardButton(f"🔢 {count}", callback_data=f"tasbih_{i}")])
     keyboard.append([InlineKeyboardButton("🔄 تصفير الكل", callback_data="reset_all")])
     return InlineKeyboardMarkup(keyboard)
 
 async def tasbih(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.setdefault("tasbih_counts", {})
     keyboard = build_tasbih_keyboard(context.user_data["tasbih_counts"])
-
-    await update.message.reply_text(
-        "📿 السبحة الذكية\nاضغط على العداد لزيادة العدد",
-        reply_markup=keyboard
-    )
-    await random_reaction(update)
+    await update.message.reply_text("📿 السبحة الذكية", reply_markup=keyboard)
 
 async def tasbih_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     counts = context.user_data.setdefault("tasbih_counts", {})
 
     if query.data.startswith("tasbih_"):
         index = int(query.data.split("_")[1])
         counts[index] = counts.get(index, 0) + 1
-
     elif query.data == "reset_all":
         context.user_data["tasbih_counts"] = {}
         counts = {}
@@ -211,36 +193,28 @@ async def tasbih_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # الإدارة
 # ==============================
-
 BROADCAST = 1
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         return
-
     cur.execute("SELECT COUNT(*) FROM users")
     total = cur.fetchone()[0]
-
-    await update.message.reply_text(
-        f"⚙️ لوحة المطور\n\nعدد المستخدمين: {total}"
-    )
+    await update.message.reply_text(f"⚙️ لوحة المطور\n\nعدد المستخدمين: {total}")
 
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
         return ConversationHandler.END
-
     await update.message.reply_text("أرسل رسالة الإذاعة الآن")
     return BROADCAST
 
 async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message.text
-
     cur.execute("SELECT user_id FROM users")
     users = cur.fetchall()
 
     sent = 0
     failed = 0
-
     for user in users:
         try:
             await context.bot.send_message(user[0], message)
@@ -254,56 +228,28 @@ async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==============================
-# Flask (لـ Render Web Service)
+# Flask + Webhook
 # ==============================
-
-from flask import Flask, request
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ConversationHandler,
-    ContextTypes,
-    filters,
-)
-import asyncio
-import os
-
 app = Flask(__name__)
 
 @app.route("/")
 def home():
     return "Bot is running"
 
-# ==============================
-# إنشاء التطبيق
-# ==============================
-
 application = Application.builder().token(BOT_TOKEN).build()
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("admin", admin))
-
 application.add_handler(ConversationHandler(
     entry_points=[CommandHandler("broadcast", broadcast_start)],
-    states={
-        BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)]
-    },
+    states={BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)]},
     fallbacks=[]
 ))
-
 application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), show_azkar))
 application.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), stats))
 application.add_handler(MessageHandler(filters.Regex("📿 السبحة"), tasbih))
 application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
-
 application.add_handler(CallbackQueryHandler(tasbih_handler))
-
-# ==============================
-# Webhook Route
-# ==============================
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 async def webhook():
@@ -312,22 +258,20 @@ async def webhook():
     return "ok"
 
 # ==============================
-# التشغيل الصحيح لـ Render
+# التشغيل النهائي المستقر
 # ==============================
-
 if __name__ == "__main__":
     initialize_database()
 
-    async def main():
+    async def setup():
         await application.initialize()
         await application.start()
-
-        # تعيين الويبهوك (ضع رابط مشروعك هنا)
         await application.bot.set_webhook(
-            url=f"https://YOUR-RENDER-APP.onrender.com/{BOT_TOKEN}"
+            url=f"https://ramadaan.onrender.com/{BOT_TOKEN}"
         )
 
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(setup())
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
