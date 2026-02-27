@@ -291,10 +291,6 @@ asyncio.set_event_loop(loop)
 
 
 # ===== Flask Routes =====
-@app.route("/")
-def home():
-    return "Bot is running"
-
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
