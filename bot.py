@@ -266,32 +266,31 @@ def home():
 # تشغيل البوت
 # ==============================
 
-if __name__ == "__main__":
-    initialize_database()
+# ===== إنشاء التطبيق =====
+application = Application.builder().token(BOT_TOKEN).build()
 
-    application = Application.builder().token(BOT_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("admin", admin))
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin))
+application.add_handler(ConversationHandler(
+    entry_points=[CommandHandler("broadcast", broadcast_start)],
+    states={BROADCAST: [MessageHandler(filters.TEXT, broadcast_send)]},
+    fallbacks=[]
+))
 
-    application.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("broadcast", broadcast_start)],
-        states={BROADCAST: [MessageHandler(filters.TEXT, broadcast_send)]},
-        fallbacks=[]
-    ))
+application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), show_azkar))
+application.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), stats))
+application.add_handler(MessageHandler(filters.Regex("📿 السبحة"), tasbih))
+application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
+application.add_handler(CallbackQueryHandler(tasbih_handler))
 
-    application.add_handler(MessageHandler(filters.Regex("📖 الأذكار"), show_azkar))
-    application.add_handler(MessageHandler(filters.Regex("📊 إحصائياتي"), stats))
-    application.add_handler(MessageHandler(filters.Regex("📿 السبحة"), tasbih))
-    application.add_handler(MessageHandler(filters.Regex("🤝 مشاركة"), share_bot))
 
-    application.add_handler(CallbackQueryHandler(tasbih_handler))
-
-    # Webhook setup
-# إنشاء event loop عالمي
+# ===== إنشاء Event Loop =====
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
+
+# ===== Flask Routes =====
 @app.route("/")
 def home():
     return "Bot is running"
@@ -302,6 +301,8 @@ def webhook():
     loop.create_task(application.process_update(update))
     return "ok"
 
+
+# ===== التشغيل =====
 if __name__ == "__main__":
     initialize_database()
 
